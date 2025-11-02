@@ -2,7 +2,7 @@
 import os
 import threading
 
-# Try using winsound (only available on Windows)
+# Try winsound (Windows)
 try:
     import winsound
     _HAS_WINSOUND = True
@@ -12,17 +12,15 @@ except:
 BEEP_PATH = os.path.join(os.path.dirname(__file__), "beep.wav")
 
 def play_beep_blocking():
-    """Play beep sound (blocking) using winsound."""
-    if _HAS_WINSOUND:
-        if os.path.exists(BEEP_PATH):
-            winsound.PlaySound(BEEP_PATH, winsound.SND_FILENAME)
-        else:
-            # Fallback if beep.wav missing
-            winsound.Beep(2000, 700)
+    """Play beep using winsound (Windows) or do nothing."""
+    if _HAS_WINSOUND and os.path.exists(BEEP_PATH):
+        winsound.PlaySound(BEEP_PATH, winsound.SND_FILENAME)
+    elif _HAS_WINSOUND:
+        winsound.Beep(2000, 700)  # Fallback beep
     else:
-        # Non-Windows: no beep
+        # On platforms without winsound, Streamlit app will use st.audio fallback
         pass
 
 def play_beep_nonblocking():
-    """Play beep in separate thread so UI does not freeze."""
+    """Run beep in thread."""
     threading.Thread(target=play_beep_blocking, daemon=True).start()

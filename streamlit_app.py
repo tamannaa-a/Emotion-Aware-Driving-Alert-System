@@ -1,93 +1,94 @@
+# streamlit_app.py
+
 import streamlit as st
 import cv2
 import mediapipe as mp
 import numpy as np
-from utils import eye_aspect_ratio, play_beep_nonblocking
+from utils import play_beep_nonblocking
 
 st.set_page_config(page_title="Drowsiness Detection", layout="wide")
-st.title("🚗 Real-Time Drowsiness Detection System")
 
-# Mediapipe initialization
-mp_face_mesh = mp.solutions.face_mesh
-face_mesh = mp_face_mesh.FaceMesh(
-    max_num_faces=1,
-    refine_landmarks=True,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5
-)
+st.title("🚘 Real-Time Drowsiness Detection System")
+st.write("Eyes closed for long = Drowsiness alert with beep sound.")
 
-# EAR Threshold + Frame Counter Settings
+# ========== CONFIG ==========
 EAR_THRESHOLD = 0.25
-CLOSED_FRAMES_REQUIRED = 15  # ~1 sec if camera runs at ~15 FPS
+CLOSED_FRAMES_REQUIRED = 15    # approx 0.5 sec at ~30 FPS
+# ============================
+
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(refine_landmarks=True, max_num_faces=1)
+
+# Mediapipe Eye Indexes
+LEFT_EYE = [159, 145, 33, 133]
+RIGHT_EYE = [386, 374, 263, 362]
+
+def euclidean_dist(a, b):
+    return np.linalg.norm(a - b)
+
+def eye_aspect_ratio(landmarks, eye_idx, img_w, img_h):
+    p1 = np.array([landmarks[eye_idx[0]].x * img_w, landmarks[eye_idx[0]].y * img_h])
+    p2 = np.array([landmarks[eye_idx[1]].x * img_w, landmarks[eye_idx[1]].y * img_h])
+    p3 = np.array([landmarks[eye_idx[2]].x * img_w, landmarks[eye_idx[2]].y * img_h])
+    p4 = np.array([landmarks[eye_idx[3]].x * img_w, landmarks[eye_idx[3]].y * img_h])
+
+    ear = (euclidean_dist(p1, p2)) / (2 * euclidean_dist(p3, p4))
+    return ear
+
+stframe = st.empty()
+
 closed_frames = 0
+alert_active = False
 
-# Mediapipe eye landmark IDs (left + right)
-LEFT_EYE = [33, 160, 158, 133, 153, 144]
-RIGHT_EYE = [362, 385, 387, 263, 373, 380]
+cap = cv2.VideoCapture(0)
 
-# Video input
-run = st.checkbox("Start Camera")
+if not cap.isOpened():
+    st.error("❌ Camera not detected!")
+else:
+    st.success("✅ Camera connected successfully!")
 
-FRAME_WINDOW = st.image([])
-
-cap = None
-
-if run:
-    cap = cv2.VideoCapture(0)
-
-while run:
+while cap.isOpened():
     ret, frame = cap.read()
     if not ret:
-        st.error("⚠️ Unable to access the camera.")
+        st.warning("❗ Cannot read from camera")
         break
 
     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    h, w, _ = frame.shape
-
     results = face_mesh.process(frame_rgb)
 
-    ear = 1.0  # default if face not detected
+    h, w = frame.shape[:2]
 
     if results.multi_face_landmarks:
-        landmarks = results.multi_face_landmarks[0].landmark
+        lm = results.multi_face_landmarks[0].landmark
 
-        # Extract left + right eye points
-        left_eye_points = np.array([(landmarks[i].x * w, landmarks[i].y * h) for i in LEFT_EYE])
-        right_eye_points = np.array([(landmarks[i].x * w, landmarks[i].y * h) for i in RIGHT_EYE])
+        leftEAR = eye_aspect_ratio(lm, LEFT_EYE, w, h)
+        rightEAR = eye_aspect_ratio(lm, RIGHT_EYE, w, h)
+        EAR = (leftEAR + rightEAR) / 2.0
 
-        # EAR calculation
-        left_EAR = eye_aspect_ratio(left_eye_points)
-        right_EAR = eye_aspect_ratio(right_eye_points)
-        ear = (left_EAR + right_EAR) / 2.0
+        # Eye State Logic
+        if EAR < EAR_THRESHOLD:
+            closed_frames += 1
+        else:
+            closed_frames = 0
+            alert_active = False
 
-        # Display EAR on screen
-        cv2.putText(frame, f"EAR: {ear:.2f}", (30, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        # Drowsiness Condition
+        if closed_frames >= CLOSED_FRAMES_REQUIRED and not alert_active:
+            alert_active = True
+            play_beep_nonblocking()
 
-        # Draw landmarks
-        for point in left_eye_points:
-            cv2.circle(frame, tuple(point.astype(int)), 2, (0, 255, 255), -1)
-        for point in right_eye_points:
-            cv2.circle(frame, tuple(point.astype(int)), 2, (255, 255, 0), -1)
+            cv2.putText(frame, "DROWSINESS ALERT!", (60, 80),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0, 0, 255), 3)
+        else:
+            cv2.putText(frame, f"EAR: {EAR:.3f}", (20, 40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
-    # ------------------------------
-    # ✅ DROWSINESS LOGIC (BLINK-SAFE)
-    # ------------------------------
-    if ear < EAR_THRESHOLD:
-        closed_frames += 1
-    else:
-        closed_frames = 0
+        # Eye labels
+        state = "Closed" if EAR < EAR_THRESHOLD else "Open"
+        cv2.putText(frame, f"Eyes: {state}", (20, 450),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
-    # Trigger only if eyes are closed for long duration
-    if closed_frames >= CLOSED_FRAMES_REQUIRED:
-        cv2.putText(frame, "DROWSINESS ALERT!", (100, 100),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
-        play_beep_nonblocking()
-    else:
-        cv2.putText(frame, "Awake", (100, 100),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+    stframe.image(frame, channels="BGR")
 
-    FRAME_WINDOW.image(frame, channels="BGR")
-
-if cap:
-    cap.release()
+cap.release()
+face_mesh.close()

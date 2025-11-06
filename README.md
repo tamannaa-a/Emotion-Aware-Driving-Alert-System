@@ -71,5 +71,5 @@ Where:
 
 ### 1️⃣ Clone the Repository
 ```bash
-git clone https://github.com/your-username/Drowsiness-Detection.git
+git clone https://github.com/tamannaa-a/Drowsiness-Detection.git
 cd Drowsiness-Detection
